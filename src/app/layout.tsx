@@ -9,7 +9,6 @@ import React from 'react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from 'sonner';
 import Script from 'next/script';
-import { UMAMI_WEBSITE_ID } from '@/constants';
 import { SoftwareApplicationJsonLd, WebsiteJsonLd, FAQPageJsonLd, HowToJsonLd, BreadcrumbJsonLd } from '@/components/JsonLd'; // Ensure this path is correct
 
 const inter = Inter({ subsets: ['latin'] });
@@ -71,10 +70,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="en" suppressHydrationWarning>
-      {/* Umami Analytics */}
-      <Script defer src="https://cloud.umami.is/script.js" data-website-id={UMAMI_WEBSITE_ID} />
-
-      {/* Apply font and base dark mode background */}
       <body className={`${inter.className} antialiased bg-gray-50 dark:bg-gray-950 transition-colors duration-200`}>
         <ThemeProvider
           attribute="class"

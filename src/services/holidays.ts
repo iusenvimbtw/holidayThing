@@ -1,107 +1,162 @@
-interface LocalityInfoItem {
-  name: string;
-  description?: string;
-  isoName?: string;
-  order: number;
-  adminLevel?: number;
-  isoCode?: string;
-  wikidataId?: string;
-  geonameId?: number;
-}
+// src/services/holidays.ts
+import {
+  DetectedHoliday,
+  HolidayResponse,
+  GeoLocationResponse,
+  LocalityInfo,
+  LocalityInfoItem
+} from '@/types'; // Adjust path if needed
 
-interface LocalityInfo {
-  administrative: LocalityInfoItem[];
-  informative: LocalityInfoItem[];
-}
+// --- Define API Base URLs ---
+const NAGER_API_BASE_URL = 'https://date.nager.at/api/v3/PublicHolidays';
+// Use environment variable if available, otherwise fallback to the direct URL
+const INDIA_API_BASE_URL = process.env.NEXT_PUBLIC_INDIA_HOLIDAY_API_URL;
 
-interface GeoLocationResponse {
-  latitude: number;
-  lookupSource: string;
-  longitude: number;
-  localityLanguageRequested: string;
-  continent: string;
-  continentCode: string;
-  countryName: string;
-  countryCode: string;
-  principalSubdivision: string;
-  principalSubdivisionCode: string;
-  city: string;
-  locality: string;
-  postcode: string;
-  plusCode: string;
-  csdCode: string;
-  localityInfo: LocalityInfo;
-}
-
-interface HolidayResponse {
-  date: string;
-  localName: string;
-  name: string;
-  countryCode: string;
-  fixed: boolean;
-  global: boolean;
-  counties: string[] | null;
-  launchYear: number | null;
-  types: string[];
-}
-
-export interface DetectedHoliday {
-  date: string;
-  name: string;
-}
+// --- Helper Functions ---
 
 const getCountryFromCoordinates = async (latitude: number, longitude: number): Promise<GeoLocationResponse> => {
   try {
     const response = await fetch(
+      // Using BigDataCloud for reverse geocoding
       `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`,
     );
-    return await response.json();
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`BigDataCloud API Error (${response.status}): ${errorBody}`);
+      throw new Error(`Failed to fetch location data (Status: ${response.status})`);
+    }
+    const data: GeoLocationResponse = await response.json();
+    // Basic check for expected properties
+    if (!data || !data.countryCode) {
+      throw new Error("Invalid response format from geolocation service.");
+    }
+    return data;
   } catch (error) {
     console.error('Error getting country from coordinates:', error);
-    throw new Error('Failed to detect country from location');
+    // Provide a user-friendly error message
+    throw new Error(`Could not determine country from location. Please ensure location services are enabled and try again. Details: ${error instanceof Error ? error.message : String(error)}`);
   }
 };
 
+// --- Main Holiday Detection Function ---
+
 export const detectPublicHolidays = async (year?: number): Promise<DetectedHoliday[]> => {
+  let position: GeolocationPosition | null = null;
+  let locationData: GeoLocationResponse | null = null;
+
   try {
-    // Get user's location
-    const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+    // 1. Get user's location
+    console.log("Attempting to get geolocation...");
+    position = await new Promise<GeolocationPosition>((resolve, reject) => {
       if (!navigator.geolocation) {
-        reject(new Error('Geolocation is not supported by your browser'));
+        reject(new Error('Geolocation is not supported by this browser.'));
         return;
       }
-      navigator.geolocation.getCurrentPosition(resolve, reject);
+      navigator.geolocation.getCurrentPosition(
+        resolve,
+        (err) => {
+          console.error(`Geolocation Error: Code ${err.code}, Message: ${err.message}`);
+          let userMessage = 'Could not get your location.';
+          if (err.code === err.PERMISSION_DENIED) {
+            userMessage = 'Location permission denied. Please enable location access in your browser settings.';
+          } else if (err.code === err.POSITION_UNAVAILABLE) {
+            userMessage = 'Location information is unavailable.';
+          } else if (err.code === err.TIMEOUT) {
+            userMessage = 'Location request timed out.';
+          }
+          reject(new Error(userMessage));
+        },
+        { timeout: 10000, enableHighAccuracy: false } // 10s timeout, standard accuracy
+      );
     });
+    console.log("Geolocation acquired:", `Lat: ${position.coords.latitude}, Lon: ${position.coords.longitude}`);
 
-    // Get country code from coordinates
-    const { countryCode, principalSubdivisionCode } = await getCountryFromCoordinates(
+
+    // 2. Get country code from coordinates
+    console.log("Fetching country/region data from coordinates...");
+    locationData = await getCountryFromCoordinates(
       position.coords.latitude,
       position.coords.longitude,
     );
+    const { countryCode, principalSubdivisionCode } = locationData;
+    console.log(`Detected Country Code: ${countryCode}, Subdivision: ${principalSubdivisionCode || 'N/A'}`);
 
-    // Use provided year or default to current year
-    const targetYear = year || new Date().getUTCFullYear();
 
-    // Fetch holidays from Nager.Date API
-    const response = await fetch(
-      `https://date.nager.at/api/v3/PublicHolidays/${targetYear}/${countryCode}`,
-    );
+    // 3. Determine target year
+    const targetYear = year || new Date().getFullYear();
+
+
+    // 4. Construct API URL conditionally
+    let apiUrl = '';
+    const isIndia = countryCode === 'IN';
+
+    if (isIndia) {
+      apiUrl = `${INDIA_API_BASE_URL}/${targetYear}/IN`;
+      console.log(`Using custom API for India (${targetYear}): ${apiUrl}`);
+    } else {
+      apiUrl = `${NAGER_API_BASE_URL}/${targetYear}/${countryCode}`;
+      console.log(`Using Nager API for ${countryCode} (${targetYear}): ${apiUrl}`);
+    }
+
+
+    // 5. Fetch holidays
+    console.log(`Fetching holidays from: ${apiUrl}`);
+    const response = await fetch(apiUrl);
 
     if (!response.ok) {
-      throw new Error('Failed to fetch holidays');
+      if (response.status === 404) {
+        console.warn(`No holiday data found for ${countryCode} in ${targetYear}. API responded with 404.`);
+        return []; // Return empty array if no data found
+      }
+      const errorBody = await response.text();
+      throw new Error(`Failed to fetch holidays from ${apiUrl}. Status: ${response.status} ${response.statusText}. Body: ${errorBody}`);
     }
 
     const holidays: HolidayResponse[] = await response.json();
 
-    const filteredHolidays = holidays.filter((holiday) => holiday.global || holiday.counties?.includes(principalSubdivisionCode));
+    if (!Array.isArray(holidays)) {
+      console.error("Received non-array response from holiday API:", holidays);
+      throw new Error(`Invalid response format received from ${apiUrl}. Expected an array.`);
+    }
+    console.log(`Received ${holidays.length} holidays initially for ${countryCode} ${targetYear}.`);
 
-    // Transform the response to match our app's format
-    return filteredHolidays.map(holiday => ({
+
+    // 6. *CONDITIONAL* Filtering based on API source
+    let relevantHolidays: HolidayResponse[];
+
+    if (isIndia) {
+      // **ASSUMPTION:** Your custom worker for India ALREADY returns only Public/Optional holidays.
+      // No further filtering based on 'global' or 'counties' is needed here for IN.
+      relevantHolidays = holidays;
+      console.log(`Using ${relevantHolidays.length} holidays directly from custom India API.`);
+    } else {
+      // **FILTERING:** Apply standard Nager API filtering logic for ALL OTHER countries.
+      relevantHolidays = holidays.filter(
+        (holiday): holiday is HolidayResponse => // Type guard helps ensure properties exist
+          holiday != null && // Check if holiday object exists
+          (holiday.global === true || // Keep if it's a global holiday for the country
+            (Array.isArray(holiday.counties) && holiday.counties.includes(principalSubdivisionCode))) // Or if it applies to the specific subdivision
+      );
+      console.log(`Filtered Nager results down to ${relevantHolidays.length} holidays for ${countryCode} ${targetYear} based on global/subdivision.`);
+    }
+
+
+    // 7. Transform the final list to match the app's expected format
+    return relevantHolidays.map(holiday => ({
       date: holiday.date,
+      // Prefer localName if available, otherwise use the general name
       name: holiday.localName || holiday.name,
     }));
+
   } catch (error) {
     console.error('Error detecting public holidays:', error);
-    throw error;
+    // Log specific details if available
+    if (position) console.error('Position at time of error:', position.coords);
+    if (locationData) console.error('Location data at time of error:', locationData);
+
+    // Return empty array for graceful failure in the UI
+    // You might want to show a toast notification here to inform the user
+    // e.g., import { toast } from 'sonner'; toast.error("Could not detect holidays", { description: (error as Error).message });
+    return [];
   }
 };
