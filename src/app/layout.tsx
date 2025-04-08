@@ -58,6 +58,7 @@ export const viewport: Viewport = {
   minimumScale: 1,
   maximumScale: 5,
   userScalable: true,
+  // Add theme color for better mobile browser integration
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: '#ffffff' }, // Light theme background
     { media: '(prefers-color-scheme: dark)', color: '#030711' },  // Dark theme background (e.g., gray-950)
@@ -75,7 +76,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           defaultTheme="system" // Default to system preference
           enableSystem        // Enable system preference detection
           disableTransitionOnChange
+        // removed forcedTheme="light"
         >
+          {/* JSON-LD Structured Data */}
           <WebsiteJsonLd
             url={baseUrl}
             name="holidayThing"
@@ -115,15 +118,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             ]}
           />
 
+          {/* Main App Structure */}
           <TooltipProvider>
             <div className="relative min-h-screen flex flex-col">
               <Header />
+              {/* Adjusted main background for better consistency */}
               <main id="main-content" className="flex-grow bg-gray-50 dark:bg-gray-900" role="main">
                 {children}
               </main>
               <Footer />
             </div>
           </TooltipProvider>
+          {/* Toast Notifications */}
           <Toaster richColors closeButton position="bottom-right" />
         </ThemeProvider>
       </body>
